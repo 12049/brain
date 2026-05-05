@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=yes, viewport-fit=cover">
+    <meta name="description" content="BrainCode Support System - نظام الدعم التقني للطلاب">
+    <meta name="theme-color" content="#2E7D32">
+    <title>BrainCode | نظام الدعم التقني</title>
+    <link rel="icon" type="image/x-icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧠</text></svg>">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+    <div id="toast" class="toast"></div>
+    <div id="loadingOverlay" class="loading-overlay" style="display: none;">
+        <div class="loading-spinner"><i class="fas fa-spinner fa-pulse fa-3x"></i><p>جاري التحميل...</p></div>
+    </div>
+    <div class="container" id="app"></div>
+
+    <script>
+        // ========== API Configuration ==========
+        const API_BASE = window.location.origin + '/api';
+        let currentUser = null;
+        let token = localStorage.getItem('token');
+        
+        // خدمة الإشعارات
+        let swRegistration = null;
+        let notificationPermission = false;
+        
+        // ========== Helper Functions ==========
+        function showToast(msg, isError = false, duration = 3000) {
+            const toast = document.getElementById('toast');
+            toast.textContent = msg;
+            toast.classList.remove('error', 'success');
+            if (isError) toast.classList.add('error');
+            else toast.classList.add('success');
+            toast.classList.add('show');
+            setTimeout(() => toast.classList.remove('show'), duration);
+        }
+        
+        function showLoading(show = true) {
+            const overlay = document.getElementById('loadingOverlay');
+            overlay.style.display = show ? 'flex' : 'none';
+        }
+        
+        async function fetchAPI(endpoint, options = {}) {
+            const defaultOptions = {
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...(token && { 'Authorization': `Bearer ${token}` })
+                }
+            };
+            try {
+                const res = await fetch(`${API_BASE}${endpoint}`, { ...defaultOptions, ...options });
+                const data = await res.json();
+                if (!data.status && (data.message === 'توكن غير صالح' || data.message === 'انتهت صلاحية التوكن')) {
+                    localStorage.removeItem('token');
+                    token = null;
+                    currentUser = null;
+                    renderLoginPage();
+                    showToast('انتهت صلاحية الجلسة، يرجى تسجيل الدخول مرة أخرى', true);
+                }
+                return data;
+            } catch (error) {
+                console.error('API Error:', error);
+                showToast('خطأ في الاتصال بالخادم', true);
+                return { status: false, message: error.message };
+            }
+        }
+        
+        // ========== Notifications System ==========
+        async function initNotifications() {
+            if (!('Notification' in window)) {
+                console.log('المتصفح لا يدعم الإشعارات');
+                return false;
+            }
+            
+            if (Notification.permission === 'granted') {
+                notificationPermission = true;
+                await registerServiceWorker();
+                return true;
+            }
+            
+            if (Notification.permission !== 'denied') {
+                const permission = await Notification.requestPermission();
+                notificationPermission = permission === 'granted';
+                if (notificationPermission) {
+                    await registerServiceWorker();
+                    await saveSubscription();
+                    showToast('✅ تم تفعيل الإشعارات بنجاح');
+                }
+                return notificationPermission;
+            }
+            
+            return false;
+        }
+        
+        async function registerServiceWorker() {
+            if ('serviceWorker' in navigator) {
+                try {
+                    swRegistration = await navigator.serviceWorker.register('/sw.js');
+                    console.log('Service Worker registered');
+                    return swRegistration;
+                } catch (error) {
+                    console.error('Service Worker registration failed:', error);
+                }
+            }
+            return null;
+        }
+        
+        async function saveSubscription() {
+            if (!swRegistration || !currentUser) return;
+            
+            try {
+                const subscription = await swRegistration.pushManager.subscribe({
+                    userVisibleOnly: true,
+                    applicationServerKey: urlBase64ToUint8Array('BCv6xXxXxXxXxXxXxXxXxXxXxXxXxXxXxXxXxXxXxXxXxXxXxXxXxXxXxXxXxXxXxX')
+                });
+                
+                await fetchAPI('/auth/subscribe', {
+                    method: 'POST',
+                    body: JSON.stringify({ subscription })
+                });
+            } catch (error) {
+                console.error('Subscription error:', error);
+            }
+        }
+        
+        function urlBase64ToUint8Array(base64String) {
+            const padding = '='.repeat((4 - base64String.length % 4) % 4);
+            const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+            const rawData = window.atob(base64);
+            const outputArray = new Uint8Array(rawData.length);
+            for (let i = 0; i < rawData.length; ++i) {
+                outputArray[i] = rawData.charCodeAt(i);
+            }
+            return outputArray;
+        }
+        
+        // ========== Pages ==========
+        function renderLoginPage() {
+            document.getElementById('app').innerHTML = `
+                <div class="header">
+                    <div class="logo"><i class="fas fa-brain"></i></div>
+                    <h1>BrainCode</h1>
+                    <p class="subtitle">نظام الدعم التقني</p>
+                    <p class="tagline"><i class="fas fa-code"></i> THE MIND CODES TOMORROW</p>
+                </div>
+                
+                <div class="tabs">
+                    <button class="tab-btn active" data-tab="login">تسجيل دخول</button>
+                    <button class="tab-btn" data-tab="register">حساب جديد</button>
+                </div>
+                
+                <div id="loginForm" class="form-card">
+                    <div class="input-group"><i class="fas fa-user"></i><input type="text" id="loginUsername" placeholder="اسم المستخدم أو البريد الإلكتروني"></div>
+                    <div class="input-group"><i class="fas fa-lock"></i><input type="password" id="loginPassword" placeholder="كلمة المرور"></div>
+                    <button class="btn btn-primary" id="doLoginBtn"><i class="fas fa-arrow-left"></i> دخول</button>
+                </div>
+                
+                <div id="registerForm" class="form-card" style="display:none">
+                    <div class="input-group"><i class="fas fa-user"></i><input type="text" id="regUsername" placeholder="اسم المستخدم"></div>
+                    <div class="input-group"><i class="fas fa-envelope"></i><input type="email" id="regEmail" placeholder="البريد الإلكتروني"></div>
+                    <div class="input-group"><i class="fas fa-phone"></i><input type="tel" id="regPhone" placeholder="رقم الهاتف"></div>
+                    <div class="input-group"><i class="fas fa-lock"></i><input type="password" id="regPassword" placeholder="كلمة المرور"></div>
+                    <div class="input-group"><i class="fas fa-check-circle"></i><input type="password" id="regConfirmPassword" placeholder="تأكيد كلمة المرور"></div>
+                    <select id="regDepartment" class="select-field"><option value="">القسم</option><option>ميكاترونيكس</option><option>اتصالات</option><option>حواسيب</option><option>الكترون</option><option>قيادة</option><option>تحكم</option><option>نظم قدرة</option></select>
+                    <select id="regYear" class="select-field"><option value="">السنة الدراسية</option><option>سنة أولى</option><option>سنة ثانية</option><option>سنة ثالثة</option><option>سنة رابعة</option><option>سنة خامسة</option></select>
+                    <button class="btn btn-primary" id="doRegisterBtn">إنشاء حساب <i class="fas fa-user-plus"></i></button>
+                </div>
+                
+                <div class="info-section">
+                    <div class="info-card"><i class="fas fa-tools"></i><h3>الدعم التقني</h3><p>نقدم حلولاً سريعة لمشاكلك التقنية</p></div>
+                    <div class="info-card"><i class="fas fa-users"></i><h3>فريق متخصص</h3><p>تقنيون مؤهلون لحل جميع المشاكل</p></div>
+                    <div class="info-card"><i class="fas fa-clock"></i><h3>خدمة سريعة</h3><p>استجابة فورية لطلبات الدعم</p></div>
+                </div>
+            `;
+            
+            document.querySelectorAll('.tab-btn').forEach(btn => {
+                btn.onclick = () => {
+                    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+                    btn.classList.add('active');
+                    const tab = btn.dataset.tab;
+                    document.getElementById('loginForm').style.display = tab === 'login' ? 'block' : 'none';
+                    document.getElementById('registerForm').style.display = tab === 'register' ? 'block' : 'none';
+                };
+            });
+            
+            document.getElementById('doLoginBtn').onclick = handleLogin;
+            document.getElementById('doRegisterBtn').onclick = handleRegister;
+        }
+        
+        // ========== Auth Functions ==========
+        async function handleLogin() {
+            const username = document.getElementById('loginUsername').value.trim();
+            const password = document.getElementById('loginPassword').value.trim();
+            
+            if (!username || !password) {
+                showToast('يرجى إدخال اسم المستخدم وكلمة المرور', true);
+                return;
+            }
+            
+            showLoading(true);
+            const data = await fetchAPI('/auth/login', {
+                method: 'POST',
+                body: JSON.stringify({ username, password })
+            });
+            showLoading(false);
+            
+            if (data.status) {
+                token = data.token;
+                currentUser = data.user;
+                localStorage.setItem('token', token);
+                localStorage.setItem('user', JSON.stringify(currentUser));
+                showToast('تم تسجيل الدخول بنجاح');
+                await initNotifications();
+                renderDashboardPage();
+            } else {
+                showToast(data.message || 'فشل تسجيل الدخول', true);
+            }
+        }
+        
+        async function handleRegister() {
+            const username = document.getElementById('regUsername').value.trim();
+            const email = document.getElementById('regEmail').value.trim();
+            const phone = document.getElementById('regPhone').value.trim();
+            const password = document.getElementById('regPassword').value;
+            const confirm = document.getElementById('regConfirmPassword').value;
+            const department = document.getElementById('regDepartment').value;
+            const academicYear = document.getElementById('regYear').value;
+            
+            if (!username || !email || !phone || !password || !department || !academicYear) {
+                showToast('جميع الحقول مطلوبة', true);
+                return;
+            }
+            if (password !== confirm) {
+                showToast('كلمة المرور غير متطابقة', true);
+                return;
+            }
+            if (password.length < 6) {
+                showToast('كلمة المرور يجب أن تكون 6 أحرف على الأقل', true);
+                return;
+            }
+            
+            showLoading(true);
+            const data = await fetchAPI('/auth/register', {
+                method: 'POST',
+                body: JSON.stringify({ username, email, phone, password, department, academicYear })
+            });
+            showLoading(false);
+            
+            if (data.status) {
+                showToast('تم إنشاء الحساب بنجاح، يمكنك تسجيل الدخول');
+                document.getElementById('loginUsername').value = username;
+                document.querySelector('.tab-btn[data-tab="login"]').click();
+            } else {
+                showToast(data.message || 'فشل إنشاء الحساب', true);
+            }
+        }
+        
+        // ========== Dashboard ==========
+        async function renderDashboardPage() {
+            showLoading(true);
+            const [userData, requestsData] = await Promise.all([
+                fetchAPI('/auth/profile'),
+                fetchAPI('/requests/my')
+            ]);
+            showLoading(false);
+            
+            const user = userData.user || currentUser;
+            const requests = requestsData.requests || [];
+            
+            const pendingCount = requests.filter(r => r.status === 'pending').length;
+            const acceptedCount = requests.filter(r => r.status === 'accepted').length;
+            const finishedCount = requests.filter(r => r.status === 'finished').length;
+            
+            document.getElementById('app').innerHTML = `
+                <div class="header">
+                    <div class="logo small"><i class="fas fa-brain"></i></div>
+                    <div class="user-info">
+                        <h2>مرحباً ${user.username}</h2>
+                        <p class="user-role">${user.role === 'student' ? 'طالب' : user.role === 'technician' ? 'تقني' : 'مدير'}</p>
+                    </div>
+                    <button class="logout-btn" id="logoutBtn"><i class="fas fa-sign-out-alt"></i></button>
+                </div>
+                
+                <div class="stats-grid">
+                    <div class="stat-card"><div class="stat-number ${pendingCount > 0 ? 'pending' : ''}">${pendingCount}</div><div class="stat-label">قيد الانتظار</div></div>
+                    <div class="stat-card"><div class="stat-number accepted">${acceptedCount}</div><div class="stat-label">تم القبول</div></div>
+                    <div class="stat-card"><div class="stat-number finished">${finishedCount}</div><div class="stat-label">تم الإنجاز</div></div>
+                </div>
+                
+                <div class="notification-banner" id="notifBanner" style="display:${notificationPermission ? 'none' : 'flex'}">
+                    <span><i class="fas fa-bell"></i> فعّل الإشعارات لتصلك تحديثات طلباتك</span>
+                    <button id="enableNotifBtn" class="btn-small">تفعيل</button>
+                </div>
+                
+                <button class="btn btn-primary" id="newRequestBtn"><i class="fas fa-plus"></i> طلب خدمة جديدة</button>
+                
+                <div class="section-title"><i class="fas fa-list"></i> طلباتي</div>
+                <div id="requestsList" class="requests-list">
+                    ${requests.length === 0 ? '<div class="empty-state"><i class="fas fa-inbox"></i><p>لا توجد طلبات حالياً</p></div>' : 
+                        requests.map(r => `
+                            <div class="request-card status-${r.status}">
+                                <div class="request-header">
+                                    <span class="request-type"><i class="fas ${r.serviceType === 'maintenance' ? 'fa-tools' : 'fa-code'}"></i> ${r.serviceType === 'maintenance' ? 'صيانة' : 'برمجة'}</span>
+                                    <span class="request-status ${r.status}">${r.status === 'pending' ? 'قيد الانتظار' : r.status === 'accepted' ? 'تم القبول' : 'تم الإنجاز'}</span>
+                                </div>
+                                <div class="request-service"><strong>${r.subService}</strong></div>
+                                <div class="request-details">${r.details.substring(0, 100)}${r.details.length > 100 ? '...' : ''}</div>
+                                ${r.assignedTo ? `<div class="request-assigned"><i class="fas fa-user-cog"></i> التقني: ${r.assignedTo}</div>` : ''}
+                                <div class="request-date"><i class="fas fa-calendar"></i> ${new Date(r.createdAt).toLocaleDateString('ar-EG')}</div>
+                                ${r.status === 'finished' && !r.rating ? `
+                                    <div class="rating-section">
+                                        <label>تقييم الخدمة:</label>
+                                        <div class="stars" data-request-id="${r.id}">
+                                            ${[1,2,3,4,5].map(s => `<i class="far fa-star" data-rating="${s}"></i>`).join('')}
+                                        </div>
+                                    </div>
+                                ` : r.rating ? `<div class="request-rating"><i class="fas fa-star"></i> تقييمك: ${r.rating}/5</div>` : ''}
+                            </div>
+                        `).join('')
+                    }
+                </div>
+            `;
+            
+            document.getElementById('logoutBtn').onclick = logout;
+            document.getElementById('newRequestBtn').onclick = showServiceTypeModal;
+            if (document.getElementById('enableNotifBtn')) {
+                document.getElementById('enableNotifBtn').onclick = () => initNotifications();
+            }
+            
+            document.querySelectorAll('.stars').forEach(starContainer => {
+                const requestId = starContainer.dataset.requestId;
+                const stars = starContainer.querySelectorAll('i');
+                stars.forEach(star => {
+                    star.onclick = async () => {
+                        const rating = parseInt(star.dataset.rating);
+                        showLoading(true);
+                        const data = await fetchAPI('/requests/rate', {
+                            method: 'POST',
+                            body: JSON.stringify({ requestId, rating })
+                        });
+                        showLoading(false);
+                        if (data.status) {
+                            showToast('شكراً لتقييمك');
+                            renderDashboardPage();
+                        } else {
+                            showToast(data.message, true);
+                        }
+                    };
+                    star.onmouseover = () => {
+                        const val = parseInt(star.dataset.rating);
+                        stars.forEach((s, i) => {
+                            if (i < val) s.className = 'fas fa-star';
+                            else s.className = 'far fa-star';
+                        });
+                    };
+                    star.onmouseout = () => {
+                        stars.forEach(s => s.className = 'far fa-star');
+                    };
+                });
+            });
+        }
+        
+        function showServiceTypeModal() {
+            document.getElementById('app').innerHTML += `
+                <div class="modal-overlay" id="serviceModal">
+                    <div class="modal-content">
+                        <h3><i class="fas fa-cog"></i> اختر نوع الخدمة</h3>
+                        <button class="service-option" data-type="maintenance"><i class="fas fa-tools"></i> صيانة</button>
+                        <button class="service-option" data-type="programming"><i class="fas fa-code"></i> برمجة</button>
+                        <button class="btn-secondary close-modal">إلغاء</button>
+                    </div>
+                </div>
+            `;
+            
+            document.querySelectorAll('.service-option').forEach(btn => {
+                btn.onclick = () => {
+                    document.getElementById('serviceModal').remove();
+                    showRequestForm(btn.dataset.type);
+                };
+            });
+            document.querySelector('.close-modal').onclick = () => document.getElementById('serviceModal').remove();
+        }
+        
+        function showRequestForm(serviceType) {
+            const subServices = serviceType === 'maintenance' 
+                ? ['مكافحة فيروسات', 'تثبيت برنامج', 'تثبيت نظام', 'حل مشكلة لابتوب', 'غير ذلك']
+                : ['تطوير موقع', 'تطوير تطبيق', 'حل مشكلة برمجية', 'قاعدة بيانات', 'غير ذلك'];
+            
+            document.getElementById('app').innerHTML += `
+                <div class="modal-overlay" id="requestModal">
+                    <div class="modal-content request-form">
+                        <h3><i class="fas ${serviceType === 'maintenance' ? 'fa-tools' : 'fa-code'}"></i> طلب ${serviceType === 'maintenance' ? 'صيانة' : 'برمجة'}</h3>
+                        <select id="subServiceSelect" class="select-field">
+                            <option value="">اختر الخدمة</option>
+                            ${subServices.map(s => `<option value="${s}">${s}</option>`).join('')}
+                        </select>
+                        <textarea id="detailsInput" class="textarea-field" placeholder="تفاصيل الطلب..." rows="5"></textarea>
+                        <div class="modal-buttons">
+                            <button class="btn-primary" id="submitRequestBtn">إرسال الطلب</button>
+                            <button class="btn-secondary close-modal">إلغاء</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+            
+            document.getElementById('submitRequestBtn').onclick = async () => {
+                const subService = document.getElementById('subServiceSelect').value;
+                const details = document.getElementById('detailsInput').value.trim();
+                
+                if (!subService || !details) {
+                    showToast('يرجى اختيار الخدمة وكتابة التفاصيل', true);
+                    return;
+                }
+                
+                showLoading(true);
+                const data = await fetchAPI('/requests/create', {
+                    method: 'POST',
+                    body: JSON.stringify({ serviceType, subService, details })
+                });
+                showLoading(false);
+                document.getElementById('requestModal').remove();
+                
+                if (data.status) {
+                    showToast('تم إرسال الطلب بنجاح');
+                    renderDashboardPage();
+                } else {
+                    showToast(data.message, true);
+                }
+            };
+            document.querySelector('.close-modal').onclick = () => document.getElementById('requestModal').remove();
+        }
+        
+        function logout() {
+            localStorage.removeItem('token');
+            localStorage.removeItem('user');
+            token = null;
+            currentUser = null;
+            renderLoginPage();
+            showToast('تم تسجيل الخروج');
+        }
+        
+        // ========== Initialization ==========
+        const savedUser = localStorage.getItem('user');
+        if (token && savedUser) {
+            currentUser = JSON.parse(savedUser);
+            renderDashboardPage();
+            initNotifications();
+        } else {
+            renderLoginPage();
+        }
+    </script>
+</body>
+</html>
